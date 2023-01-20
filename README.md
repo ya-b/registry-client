@@ -4,6 +4,8 @@
 ```java
 RegistryClient.authBasic("localhost:5000", "admin", "123456");
 
+RegistryClient.authDockerHub("DOCKER_USERNAME", "DOCKER_PASSWORD");
+
 RegistryClient.push("C:\\tmp\\docker.tar", "localhost:5000/test:v3");
 
 RegistryClient.pull("localhost:5000/test:v1", "C:\\tmp\\docker2.tar");
@@ -19,13 +21,9 @@ maven
 <dependency>
   <groupId>io.github.ya-b</groupId>
   <artifactId>registry-client</artifactId>
-  <version>0.0.1</version>
+  <version>0.1.1</version>
 </dependency>
 ```
-gradle
-```groovy
-implementation 'io.github.ya-b:registry-client:0.0.1'
-```
 ### TODO
-+ support docker hub
 + multi platform
++ multi-thread download & upload

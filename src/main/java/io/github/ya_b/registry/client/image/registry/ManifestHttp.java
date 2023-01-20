@@ -1,4 +1,4 @@
-package io.github.ya_b.registry.client.entity.remote;
+package io.github.ya_b.registry.client.image.registry;
 
 import io.github.ya_b.registry.client.image.ImageMediaType;
 import lombok.AllArgsConstructor;

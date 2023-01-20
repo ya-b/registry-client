@@ -8,7 +8,7 @@ import java.util.Arrays;
 import java.util.List;
 
 @Data
-public class Tag {
+public class Reference {
     private static final int DIGEST_LENGTH = 71;
 
     private String endpoint;
@@ -16,8 +16,8 @@ public class Tag {
     private String tag;
     private String digest;
 
-    public static Tag parse(String image) {
-        Tag t = new Tag();
+    public static Reference parse(String image) {
+        Reference t = new Reference();
         List<String> list = new ArrayList<>(Arrays.asList(image.split(Constants.SEPARATOR)));
         if (list.size() > 1 && (list.get(0).contains(Constants.COLON) || list.get(0).contains(Constants.DOT))) {
             t.endpoint = list.remove(0);

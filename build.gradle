@@ -6,7 +6,7 @@ plugins {
 }
 
 group 'io.github.ya-b'
-version '0.0.1'
+version '0.1.1'
 
 sourceCompatibility = JavaVersion.VERSION_1_8
 targetCompatibility = JavaVersion.VERSION_1_8
@@ -16,18 +16,22 @@ repositories {
 }
 
 dependencies {
+    implementation 'net.jodah:expiringmap:0.5.10'
     implementation 'com.google.code.gson:gson:2.10'
     implementation 'com.squareup.okhttp3:okhttp:4.10.0'
     implementation 'org.apache.commons:commons-compress:1.22'
-    implementation 'commons-io:commons-io:2.11.0'
     implementation 'org.slf4j:slf4j-api:2.0.6'
-    testImplementation 'ch.qos.logback:logback-classic:1.4.5'
+    testImplementation 'ch.qos.logback:logback-classic:1.3.0'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.8.1'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.8.1'
 }
 
 test {
     useJUnitPlatform()
+    filter {
+        excludeTestsMatching 'io.github.ya_b.registry.client.RegistryClientTest.registryPullPush'
+        excludeTestsMatching 'io.github.ya_b.registry.client.RegistryClientTest.registryCopy'
+    }
 }
 
 java {

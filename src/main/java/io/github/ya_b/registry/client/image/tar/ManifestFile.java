@@ -1,4 +1,4 @@
-package io.github.ya_b.registry.client.entity.file;
+package io.github.ya_b.registry.client.image.tar;
 
 import com.google.gson.annotations.SerializedName;
 import lombok.Data;

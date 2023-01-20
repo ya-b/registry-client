@@ -1,12 +1,13 @@
 package io.github.ya_b.registry.client;
 
-import io.github.ya_b.registry.client.constant.Constants;
-import io.github.ya_b.registry.client.http.HttpClient;
-import io.github.ya_b.registry.client.http.token.BasicToken;
-import io.github.ya_b.registry.client.http.token.DockerHubToken;
-import io.github.ya_b.registry.client.image.FileOperate;
-import io.github.ya_b.registry.client.image.Image;
-import io.github.ya_b.registry.client.image.RegistryOperate;
+import io.github.ya_b.registry.client.http.auth.Authenticate;
+import io.github.ya_b.registry.client.http.auth.Credential;
+import io.github.ya_b.registry.client.http.auth.Scope;
+import io.github.ya_b.registry.client.image.Context;
+import io.github.ya_b.registry.client.manager.FileManager;
+import io.github.ya_b.registry.client.manager.RegistryManager;
+import io.github.ya_b.registry.client.name.Reference;
+import kotlin.Pair;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.*;
@@ -17,16 +18,16 @@ import java.util.Optional;
 @Slf4j
 public class RegistryClient {
 
-    private static final FileOperate FILE_OPERATE = new FileOperate();
+    private static final FileManager FILE_OPERATE = new FileManager();
 
-    private static final RegistryOperate REGISTRY_OPERATE = new RegistryOperate();
+    private static final RegistryManager REGISTRY_OPERATE = new RegistryManager();
 
     public static void authBasic(String endpoint, String username, String password) {
-        HttpClient.getInstance().auth(new BasicToken(endpoint, username, password));
+        Authenticate.instance().basic(endpoint, new Credential(username, password));
     }
 
     public static void authDockerHub(String username, String password) {
-        HttpClient.getInstance().auth(new DockerHubToken(Constants.ENDPOINT_DEFAULT, username, password));
+        Authenticate.instance().docker(new Credential(username, password));
     }
 
     public static void push(String filePath, String image) throws IOException {
@@ -36,8 +37,10 @@ public class RegistryClient {
     }
 
     public static void push(InputStream is, String image) throws IOException {
-        Image img = FILE_OPERATE.load(is);
-        REGISTRY_OPERATE.push(img, image);
+        Reference reference = Reference.parse(image);
+        Context context = FILE_OPERATE.load(is);
+        context.setToken(Authenticate.instance().getToken(new Pair<>(Scope.PULL_PUSH, reference)));
+        REGISTRY_OPERATE.push(context, reference);
     }
 
     public static void pull(String image, String filePath) throws IOException {
@@ -47,19 +50,39 @@ public class RegistryClient {
     }
 
     public static void pull(String image, OutputStream outputStream) throws IOException {
-        Image img = REGISTRY_OPERATE.load(image);
-        FILE_OPERATE.save(img, outputStream);
+        Context context = new Context();
+        Reference reference = Reference.parse(image);
+        context.setToken(Authenticate.instance().getToken(new Pair<>(Scope.PULL, reference)));
+        REGISTRY_OPERATE.load(context, reference);
+        FILE_OPERATE.save(context, outputStream);
     }
 
     public static Optional<String> digest(String image) throws IOException {
-        return REGISTRY_OPERATE.digest(image);
+        Context context = new Context();
+        Reference reference = Reference.parse(image);
+        context.setToken(Authenticate.instance().getToken(new Pair<>(Scope.PULL, reference)));
+        return REGISTRY_OPERATE.digest(context, reference);
     }
 
     public static void delete(String image) throws IOException {
-        REGISTRY_OPERATE.delete(image);
+        Context context = new Context();
+        Reference reference = Reference.parse(image);
+        context.setToken(Authenticate.instance().getToken(new Pair<>(Scope.DELETE, reference)));
+        REGISTRY_OPERATE.delete(context, reference);
     }
 
     public static void copy(String src, String dst) throws IOException {
-        REGISTRY_OPERATE.copy(src, dst);
+        Context context = new Context();
+        Reference srcReference = Reference.parse(src);
+        Reference dstReference = Reference.parse(dst);
+        if (srcReference.getEndpoint().endsWith(Authenticate.DOCKER_DOMAIN) && dstReference.getEndpoint().endsWith(Authenticate.DOCKER_DOMAIN)) {
+            context.setToken(Authenticate.instance().getToken(new Pair<>(Scope.PULL, srcReference), new Pair<>(Scope.PULL_PUSH, dstReference)));
+            REGISTRY_OPERATE.load(context, srcReference);
+        } else {
+            context.setToken(Authenticate.instance().getToken(new Pair<>(Scope.PULL, srcReference)));
+            REGISTRY_OPERATE.load(context, srcReference);
+            context.setToken(Authenticate.instance().getToken(new Pair<>(Scope.PULL_PUSH, srcReference)));
+        }
+        REGISTRY_OPERATE.copy(context, dst);
     }
 }
