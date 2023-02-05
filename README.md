@@ -15,15 +15,14 @@ RegistryClient.copy("localhost:5000/test:v1", "localhost:5000/test2:v1");
 RegistryClient.digest("localhost:5000/test:v1");
 
 RegistryClient.delete("localhost:5000/test@sha256:b8604a3fe8543c9e6afc29550de05b36cd162a97aa9b2833864ea8a5be11f3e2");
+
+List<String> tags = RegistryClient.tags("registry");
 ```
 maven
 ```xml
 <dependency>
   <groupId>io.github.ya-b</groupId>
   <artifactId>registry-client</artifactId>
-  <version>0.1.1</version>
+  <version>0.1.2</version>
 </dependency>
 ```
-### TODO
-+ multi platform
-+ multi-thread download & upload

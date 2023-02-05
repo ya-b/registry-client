@@ -1,7 +1,6 @@
 package io.github.ya_b.registry.client.http;
 
 import io.github.ya_b.registry.client.constant.Constants;
-import io.github.ya_b.registry.client.exception.RegistryException;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 
@@ -23,6 +22,8 @@ public class HttpClient {
 
 
     private static final OkHttpClient okHttpClient = new OkHttpClient.Builder()
+            .followRedirects(true)
+            .followSslRedirects(true)
             .addInterceptor(chain -> {
                 Request request = chain.request();
                 String requestId = UUID.randomUUID().toString();
@@ -34,25 +35,13 @@ public class HttpClient {
             .build();
 
     public static Response execute(String method, String url, Headers headers, RequestBody requestBody) throws IOException {
-        String execUrl = url;
-        String execMethod = method;
-        for (int i = 0; i < 3; i++) {
-            Request.Builder requestBuilder = new Request.Builder()
-                    .method(execMethod, requestBody)
-                    .url(Objects.requireNonNull(execUrl));
-            if (headers != null) {
-                headers.forEach(p -> requestBuilder.addHeader(p.getFirst(), p.getSecond()));
-            }
-            Response response = okHttpClient.newCall(requestBuilder.build()).execute();
-            if (response.code() < 300 || response.code() >= 400) return response;
-            if (response.code() == 303) {
-                execUrl = getLocation(response, url);
-                execMethod = METHOD_GET;
-                continue;
-            }
-            execUrl = getLocation(response, url);
+        Request.Builder requestBuilder = new Request.Builder()
+                .method(method, requestBody)
+                .url(Objects.requireNonNull(url));
+        if (headers != null) {
+            headers.forEach(p -> requestBuilder.addHeader(p.getFirst(), p.getSecond()));
         }
-        throw new RegistryException("url redirect too much times");
+        return okHttpClient.newCall(requestBuilder.build()).execute();
     }
 
     public static String getLocation(Response response, String url) {

@@ -60,6 +60,10 @@ public class RegistryManager {
         return api.digest(reference, context.getToken());
     }
 
+    public List<String> tags(Context context, Reference reference) throws IOException {
+        return api.tags(reference, context.getToken());
+    }
+
     public void delete(Context context, Reference reference) throws IOException {
         api.deleteManifest(reference, reference.getDigest(), context.getToken());
     }

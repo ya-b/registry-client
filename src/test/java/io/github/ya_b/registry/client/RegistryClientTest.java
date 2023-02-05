@@ -3,12 +3,16 @@ package io.github.ya_b.registry.client;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.LoggerContext;
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 class RegistryClientTest {
@@ -23,6 +27,18 @@ class RegistryClientTest {
         logger.setLevel(Level.DEBUG);
         RegistryClient.authBasic("localhost:5000", "admin", "123456");
         RegistryClient.authDockerHub(System.getenv("DOCKER_USERNAME"), System.getenv("DOCKER_PASSWORD"));
+    }
+
+    @Test
+    void digest() throws Exception {
+        Optional<String> digest = RegistryClient.digest("registry@sha256:ce14a6258f37702ff3cd92232a6f5b81ace542d9f1631966999e9f7c1ee6ddba");
+        Assertions.assertEquals("sha256:ce14a6258f37702ff3cd92232a6f5b81ace542d9f1631966999e9f7c1ee6ddba", digest.get());
+    }
+
+    @Test
+    void tags() throws Exception {
+        List<String> tags = RegistryClient.tags("registry");
+        Assertions.assertTrue(tags.contains("latest"));
     }
 
     @Test

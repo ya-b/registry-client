@@ -17,24 +17,22 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
-public class Authenticate {
+public class Authenticator {
     private static final String SCOPE = "repository:%s:%s";
     private AuthUrl authUrl = new AuthUrl("https://auth.docker.io/token", "registry.docker.io");
     public static final String DOCKER_DOMAIN = "docker.io";
     private final Cache<Credential> basicCredential = new Cache<>(1000);
     private final Cache<DockerAuthResp> dockerToken = new Cache<>(1);
     private Credential dockerCredential = null;
-    private static Authenticate authenticate = null;
-    private Authenticate() {}
-    public static Authenticate instance() {
-        if (authenticate == null) {
-            synchronized (Authenticate.class) {
-                if (authenticate == null) {
-                    authenticate = new Authenticate();
-                }
-            }
-        }
-        return authenticate;
+
+    private Authenticator() {}
+
+    private static final class AuthenticatorHolder {
+        static final Authenticator authenticator = new Authenticator();
+    }
+
+    public static Authenticator instance() {
+        return AuthenticatorHolder.authenticator;
     }
 
     public void setAuthUrl(AuthUrl authUrl) {
@@ -89,7 +87,7 @@ public class Authenticate {
         return "Bearer " + token;
     }
 
-    private class Cache<T> extends LinkedHashMap<String, Pair<Long, T>> {
+    private static class Cache<T> extends LinkedHashMap<String, Pair<Long, T>> {
         private final int maxSize;
 
         public Cache(int maxSize) {
