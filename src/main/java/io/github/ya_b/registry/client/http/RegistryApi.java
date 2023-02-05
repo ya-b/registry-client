@@ -3,7 +3,8 @@ package io.github.ya_b.registry.client.http;
 import io.github.ya_b.registry.client.constant.Constants;
 import io.github.ya_b.registry.client.exception.HttpCodeErrorException;
 import io.github.ya_b.registry.client.exception.RegistryException;
-import io.github.ya_b.registry.client.http.auth.Authenticate;
+import io.github.ya_b.registry.client.http.auth.Authenticator;
+import io.github.ya_b.registry.client.http.resp.TagsResp;
 import io.github.ya_b.registry.client.image.ImageMediaType;
 import io.github.ya_b.registry.client.image.registry.ManifestHttp;
 import io.github.ya_b.registry.client.name.Reference;
@@ -17,9 +18,7 @@ import okhttp3.Response;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -36,7 +35,7 @@ public class RegistryApi {
     private static final String BLOB_UPLOAD = "%s://%s/v2/%s/blobs/uploads/";
     private static final Pattern AUTH_URL_PATTERN = Pattern.compile("Bearer realm=\"(.*?)\",service=\"(.*?)\"");
 
-    private Map<String, String> schemaMap = new ConcurrentHashMap<>();
+    private final Map<String, String> schemaMap = new ConcurrentHashMap<>();
 
     private String getSchema(String endpoint) throws RegistryException {
         if (schemaMap.containsKey(endpoint)) {
@@ -50,7 +49,7 @@ public class RegistryApi {
                 if (auth == null) return schema;
                 Matcher matcher = AUTH_URL_PATTERN.matcher(auth);
                 if (!matcher.find()) return schema;
-                Authenticate.instance().setAuthUrl(new Authenticate.AuthUrl(matcher.group(1), matcher.group(2)));
+                Authenticator.instance().setAuthUrl(new Authenticator.AuthUrl(matcher.group(1), matcher.group(2)));
                 return schema;
             } catch (Throwable e) {
                 log.debug("registry not support https");
@@ -70,14 +69,14 @@ public class RegistryApi {
 
     public Optional<String> digest(Reference reference, String token) throws IOException {
         Map<String, String> headers = new HashMap<>();
+        Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
         headers.put(HttpHeaders.ACCEPT, "application/vnd.docker.distribution.manifest.v1+json," +
                 "application/vnd.docker.distribution.manifest.v1+prettyjws," +
                 "application/vnd.docker.distribution.manifest.v2+json," +
-                "application/vnd.oci.image.manifest.v1+json," +
                 "application/vnd.docker.distribution.manifest.list.v2+json," +
+                "application/vnd.oci.image.manifest.v1+json," +
                 "application/vnd.oci.image.index.v1+json");
         String url = String.format(MANIFEST, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName(), reference.getTag());
-        Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
         try (Response response = HttpClient.execute(HttpClient.METHOD_GET, url, Headers.of(headers), null)) {
             if (response.isSuccessful()) {
                 return Optional.ofNullable(response.header("Docker-Content-Digest"));
@@ -89,12 +88,28 @@ public class RegistryApi {
         }
     }
 
+    public List<String> tags(Reference reference, String token) throws IOException {
+        Map<String, String> headers = new HashMap<>();
+        Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
+        String url = String.format(TAGS, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName());
+        try (Response response = HttpClient.execute(HttpClient.METHOD_GET, url, Headers.of(headers), null)) {
+            if (!response.isSuccessful()) {
+                throw responseException(response);
+            }
+            if (response.body() != null) {
+                String body = response.body().string();
+                return JsonUtil.fromJson(body, TagsResp.class).getTags();
+            }
+        }
+        return Collections.emptyList();
+    }
+
     public Optional<ManifestHttp> getManifest(Reference reference, String token) throws IOException {
         Map<String, String> headers = new HashMap<>();
+        Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
         headers.put(HttpHeaders.ACCEPT, ImageMediaType.MANIFEST_V2.toString());
         String url = String.format(MANIFEST, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName(),
                 Optional.ofNullable(reference.getDigest()).orElse(reference.getTag()));
-        Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
         try (Response response = HttpClient.execute(HttpClient.METHOD_GET, url, Headers.of(headers), null)) {
             if (!response.isSuccessful()) {
                 throw responseException(response);
@@ -108,8 +123,8 @@ public class RegistryApi {
 
     public InputStream getBlob(Reference reference, String layerDigest, String token) throws IOException {
         Map<String, String> headers = new HashMap<>();
-        String url = String.format(BLOB, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName(), layerDigest);
         Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
+        String url = String.format(BLOB, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName(), layerDigest);
         Response response = HttpClient.execute(HttpClient.METHOD_GET, url, Headers.of(headers), null);
         if (response.isSuccessful()) {
             if (response.body() != null) {
@@ -121,8 +136,8 @@ public class RegistryApi {
 
     public boolean isBlobExists(Reference reference, String layerDigest, String token) throws IOException {
         Map<String, String> headers = new HashMap<>();
-        String url = String.format(BLOB, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName(), layerDigest);
         Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
+        String url = String.format(BLOB, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName(), layerDigest);
         try (Response response = HttpClient.execute(HttpClient.METHOD_HEAD, url, Headers.of(headers), null)) {
             return response.isSuccessful();
         }
@@ -130,8 +145,8 @@ public class RegistryApi {
 
     public String startPush(Reference reference, String token) throws IOException {
         Map<String, String> headers = new HashMap<>();
-        String url = String.format(BLOB_UPLOAD, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName());
         Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
+        String url = String.format(BLOB_UPLOAD, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName());
         try (Response response = HttpClient.execute(HttpClient.METHOD_POST, url, Headers.of(headers),
                 RequestBody.create("", MediaType.parse(ImageMediaType.LAYER.toString())))) {
             if (!response.isSuccessful()) {
@@ -143,9 +158,9 @@ public class RegistryApi {
 
     public Optional<String> mountBlob(Reference dstReference, String digest, String srcName, String token) throws IOException {
         Map<String, String> headers = new HashMap<>();
+        Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
         String mountUrl = String.format(BLOB_UPLOAD, getSchema(dstReference.getEndpoint()), dstReference.getEndpoint(), dstReference.getName())
                 + String.format("?mount=%s&from=%s", digest, srcName);
-        Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
         try (Response response = HttpClient.execute(HttpClient.METHOD_POST, mountUrl, Headers.of(headers),
                 RequestBody.create(new byte[0], MediaType.parse(ImageMediaType.MANIFEST_V2.toString())))) {
             if (response.code() == 201) {
@@ -160,9 +175,9 @@ public class RegistryApi {
 
     public void uploadBlob(String url, String digest, InputStream inputStream, Long length, String token) throws IOException {
         Map<String, String> headers = new HashMap<>();
+        Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
         String appendQuery = new URL(url).getQuery() == null ? "?" : "&";
         appendQuery += "digest=" + digest;
-        Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
         RequestBody body = new InputStreamRequestBody(inputStream, length, MediaType.parse("application/octet-stream"));
         try (Response response = HttpClient.execute(HttpClient.METHOD_PUT, url + appendQuery, Headers.of(headers), body)) {
             if (!response.isSuccessful()) {
@@ -173,8 +188,8 @@ public class RegistryApi {
 
     public void deleteLayer(Reference reference, String digest, String token) throws IOException {
         Map<String, String> headers = new HashMap<>();
-        String url = String.format(BLOB, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName(), digest);
         Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
+        String url = String.format(BLOB, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName(), digest);
         try (Response response = HttpClient.execute(HttpClient.METHOD_DELETE, url, Headers.of(headers), null)) {
             if (!response.isSuccessful()) {
                 throw responseException(response);
@@ -184,8 +199,8 @@ public class RegistryApi {
 
     public void deleteManifest(Reference reference, String digest, String token) throws IOException {
         Map<String, String> headers = new HashMap<>();
-        String url = String.format(MANIFEST, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName(), digest);
         Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
+        String url = String.format(MANIFEST, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName(), digest);
         try (Response response = HttpClient.execute(HttpClient.METHOD_DELETE, url, Headers.of(headers), null)) {
             if (!response.isSuccessful()) {
                 throw responseException(response);
@@ -195,9 +210,9 @@ public class RegistryApi {
 
     public void uploadManifest(Reference reference, ManifestHttp content, ImageMediaType contentType, String token) throws IOException {
         Map<String, String> headers = new HashMap<>();
+        Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
         RequestBody body = RequestBody.create(JsonUtil.toJson(content), MediaType.parse(contentType.toString()));
         String url = String.format(MANIFEST, getSchema(reference.getEndpoint()), reference.getEndpoint(), reference.getName(), reference.getTag());
-        Optional.ofNullable(token).ifPresent(t -> headers.put(HttpHeaders.AUTHORIZATION, t));
         try (Response response = HttpClient.execute(HttpClient.METHOD_PUT, url, Headers.of(headers), body)) {
             if (!response.isSuccessful()) {
                 throw responseException(response);
