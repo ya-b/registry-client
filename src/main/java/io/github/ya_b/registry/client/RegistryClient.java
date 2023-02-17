@@ -3,6 +3,7 @@ package io.github.ya_b.registry.client;
 import io.github.ya_b.registry.client.http.auth.Authenticator;
 import io.github.ya_b.registry.client.http.auth.Credential;
 import io.github.ya_b.registry.client.http.auth.Scope;
+import io.github.ya_b.registry.client.http.resp.CatalogResp;
 import io.github.ya_b.registry.client.image.Context;
 import io.github.ya_b.registry.client.manager.FileManager;
 import io.github.ya_b.registry.client.manager.RegistryManager;
@@ -95,5 +96,14 @@ public class RegistryClient {
             context.setToken(AUTHENTICATOR.getToken(new Pair<>(Scope.PULL_PUSH, srcReference)));
         }
         REGISTRY_OPERATE.copy(context, dst);
+    }
+
+    public static CatalogResp catalog(String url, Integer count, String last) throws IOException {
+        Reference reference = new Reference();
+        reference.setEndpoint(url);
+        Context context = new Context();
+        context.setReference(reference);
+        context.setToken(AUTHENTICATOR.getToken(new Pair<>(Scope.NONE, reference)));
+        return REGISTRY_OPERATE.catalog(context, count, last);
     }
 }

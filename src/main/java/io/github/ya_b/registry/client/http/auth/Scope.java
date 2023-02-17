@@ -1,6 +1,7 @@
 package io.github.ya_b.registry.client.http.auth;
 
 public enum Scope {
+    NONE(""),
     PULL("pull"),
     PULL_PUSH("pull,push"),
     DELETE("delete"),;

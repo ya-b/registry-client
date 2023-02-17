@@ -4,11 +4,14 @@ import io.github.ya_b.registry.client.constant.Constants;
 import io.github.ya_b.registry.client.constant.FileConstant;
 import io.github.ya_b.registry.client.exception.RegistryException;
 import io.github.ya_b.registry.client.http.RegistryApi;
+import io.github.ya_b.registry.client.http.resp.CatalogResp;
 import io.github.ya_b.registry.client.image.Blob;
 import io.github.ya_b.registry.client.image.Context;
 import io.github.ya_b.registry.client.image.registry.ManifestHttp;
 import io.github.ya_b.registry.client.name.Reference;
+import lombok.extern.slf4j.Slf4j;
 
+import javax.net.ssl.SSLException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -16,6 +19,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+@Slf4j
 public class RegistryManager {
 
     private final RegistryApi api = new RegistryApi();
@@ -91,5 +95,28 @@ public class RegistryManager {
         }
         ManifestHttp manifestHttp = context.manifestHttp();
         api.uploadManifest(dstReference, manifestHttp, manifestHttp.getMediaType(), context.getToken());
+    }
+
+    public CatalogResp catalog(Context context, Integer count, String last) throws IOException {
+        return api.catalog(context.getReference(), count, last, context.getToken());
+    }
+
+    public String getSchema(String endpoint) {
+        try {
+            api.base(String.format("%s://%s", Constants.SCHEMA_HTTPS, endpoint));
+            return Constants.SCHEMA_HTTPS;
+        } catch (SSLException e) {
+            log.trace("getSchema", e);
+        } catch (IOException e) {
+            log.warn("getSchema", e);
+            throw new RuntimeException("No response from the registry Server.");
+        }
+        try {
+            api.base(String.format("%s://%s", Constants.SCHEMA_HTTP, endpoint));
+            return Constants.SCHEMA_HTTP;
+        } catch (IOException e) {
+            log.warn("getSchema", e);
+        }
+        throw new RuntimeException("No response from the registry Server.");
     }
 }
