@@ -56,7 +56,8 @@ public class Authenticator {
         return pair.getSecond();
     }
 
-    public String getToken(Pair<Scope, Reference>... pairs) throws RegistryException {
+    @SafeVarargs
+    public final String getToken(Pair<Scope, Reference>... pairs) throws RegistryException {
         Pair<Scope, Reference> pair = pairs[0];
         Credential credential = getCredential(pair.getSecond().getEndpoint());
         if (credential != dockerCredential) {
