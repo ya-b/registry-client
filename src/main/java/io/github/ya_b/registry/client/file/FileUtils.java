@@ -26,14 +26,15 @@ public class FileUtils {
                 if (entry.isDirectory()) continue;
                 if (!tarArchiveIs.canReadEntryData(entry)) throw new IOException("read tar entry error");
                 Path itemPath = dst.resolve(FileUtils.replacePathChar(entry.getName()));
-                Files.createDirectories(itemPath.getParent());
+                Path subPath = Files.exists(itemPath) ? itemPath.resolveSibling(UUID.randomUUID().toString()) : itemPath;
+                Files.createDirectories(subPath.getParent());
                 Sha256HashOutputStream sha256HashOutputStream;
-                try (OutputStream os = new BufferedOutputStream(Files.newOutputStream(itemPath))) {
+                try (OutputStream os = new BufferedOutputStream(Files.newOutputStream(subPath))) {
                     sha256HashOutputStream = new Sha256HashOutputStream(os);
                     org.apache.commons.compress.utils.IOUtils.copyRange(tarArchiveIs, entry.getSize(), sha256HashOutputStream);
                 }
                 blobs.add(new Blob(entry.getName(), entry.getSize(), Constants.SHA256_PREFIX + sha256HashOutputStream.hash(),
-                        () -> Files.newInputStream(itemPath)));
+                        () -> Files.newInputStream(subPath)));
             }
         }
         return blobs;
