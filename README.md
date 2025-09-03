@@ -10,8 +10,6 @@ It is recommended to use [jib](https://github.com/GoogleContainerTools/jib/tree/
 // Set authentication for private registries
 RegistryClient.authBasic("localhost:5000", "admin", "123456");
 
-// Set Docker Hub authentication
-RegistryClient.authDockerHub("DOCKER_USERNAME", "DOCKER_PASSWORD");
 ```
 
 ### Image Operations
