@@ -3,6 +3,7 @@ plugins {
     id 'io.freefair.lombok' version '8.11'
     id 'maven-publish'
     id 'signing'
+    id 'org.jreleaser' version '1.14.0'
 }
 
 group 'io.github.ya-b'
@@ -89,16 +90,26 @@ publishing {
     }
     repositories {
         maven {
-            def releasesRepoUrl = "https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/"
-            def snapshotsRepoUrl = "https://s01.oss.sonatype.org/content/repositories/snapshots/"
-            url = version.endsWith('SNAPSHOT') ? snapshotsRepoUrl : releasesRepoUrl
-            credentials {
-                username System.getenv("SONATYPE_USERNAME")
-                password System.getenv("SONATYPE_PASSWORD")
+            url = layout.buildDirectory.dir('staging-deploy')
+        }
+    }
+}
+
+jreleaser {
+    signing {
+        active = 'ALWAYS'
+        armored = true
+    }
+    deploy {
+        maven {
+            mavenCentral {
+                sonatype {
+                    active = 'ALWAYS'
+                    url = 'https://central.sonatype.com/api/v1/publisher'
+                    stagingRepository('build/staging-deploy')
+                }
             }
         }
     }
-    signing {
-        sign publishing.publications.mavenJava
-    }
 }
+
