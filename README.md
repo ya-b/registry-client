@@ -1,7 +1,6 @@
 # A Java Client for Docker Registry API v2
 
 A simple Java client for Docker Registry API v2, built on Google's Jib library.
-It is recommended to use [jib](https://github.com/GoogleContainerTools/jib/tree/master/jib-core) directly.
 
 ## Usage
 
@@ -42,6 +41,6 @@ RegistryClient.catalog("localhost:5000", 100, null);
 <dependency>
   <groupId>io.github.ya-b</groupId>
   <artifactId>registry-client</artifactId>
-  <version>0.1.5</version>
+  <version>0.1.6</version>
 </dependency>
 ```

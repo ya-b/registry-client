@@ -23,9 +23,10 @@ class RegistryClientTest {
         LoggerContext loggerContext = (LoggerContext) LoggerFactory.getILoggerFactory();
         Logger logger = loggerContext.getLogger("ROOT");
         logger.setLevel(Level.DEBUG);
-        RegistryClient.authBasic("localhost:5000", "admin", "123456");
-        RegistryClient.authDockerHub(System.getenv("DOCKER_USERNAME"), System.getenv("DOCKER_PASSWORD"));
+        RegistryClient.copy("registry:2",
+                "localhost:5000/registry:latest");
     }
+
 
     @Test
     void digest() throws Exception {
@@ -38,9 +39,10 @@ class RegistryClientTest {
         List<String> tags = RegistryClient.tags("localhost:5000/registry");
         Assertions.assertTrue(tags.contains("latest"));
     }
+    
 
     @Test
-    void dockerIOPullPush() throws IOException {
+    void pullPush() throws IOException {
         Path path = Files.createTempFile(UUID.randomUUID().toString(), ".tar");
         RegistryClient.pull("localhost:5000/registry:latest", path.toString());
         Assertions.assertTrue(Files.exists(path));
@@ -51,7 +53,7 @@ class RegistryClientTest {
     }
 
     @Test
-    void dockerIOCopy() throws IOException {
+    void copy() throws IOException {
         RegistryClient.copy("localhost:5000/registry:latest",
                 "localhost:5000/registry/test:latest");
         Assertions.assertTrue(RegistryClient.digest("localhost:5000/registry/test:latest").isPresent());
