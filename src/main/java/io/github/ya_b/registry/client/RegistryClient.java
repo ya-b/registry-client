@@ -45,7 +45,7 @@ public class RegistryClient {
     /**
      * Extract registry endpoint from image reference string
      */
-    private static String extractEndpoint(String imageReference) throws InvalidImageReferenceException {
+    public static String extractEndpoint(String imageReference) throws InvalidImageReferenceException {
         ImageReference imageRef = ImageReference.parse(imageReference);
         String registry = imageRef.getRegistry();
 

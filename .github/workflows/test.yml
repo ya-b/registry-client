@@ -5,15 +5,19 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: registry:latest
+        ports:
+          - 5000:5000
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-java@v3
         with:
           distribution: 'adopt'
-          java-version: '8'
+          java-version: '17'
       - name: prepare
-        run: |
-          chmod a+x ./gradlew
+        run: chmod a+x ./gradlew
       - name: build
         run: ./gradlew :build
         env:

@@ -4,8 +4,10 @@ import lombok.Data;
 
 import java.util.List;
 
+import com.google.cloud.tools.jib.json.JsonTemplate;
+
 @Data
-public class TagsResp {
+public class TagsResp implements JsonTemplate {
 
     private String name;
     

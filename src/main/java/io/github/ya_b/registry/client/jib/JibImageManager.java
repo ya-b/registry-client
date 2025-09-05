@@ -1,23 +1,28 @@
 package io.github.ya_b.registry.client.jib;
 
 import com.google.cloud.tools.jib.api.*;
-import com.google.gson.Gson;
+import com.google.cloud.tools.jib.http.Authorization;
+import com.google.cloud.tools.jib.http.FailoverHttpClient;
+import com.google.cloud.tools.jib.http.Request;
+import com.google.cloud.tools.jib.http.Response;
+import com.google.cloud.tools.jib.json.JsonTemplateMapper;
+
+import io.github.ya_b.registry.client.http.Authenticator;
+import io.github.ya_b.registry.client.http.HttpClient;
+import io.github.ya_b.registry.client.http.Scope;
 import io.github.ya_b.registry.client.http.resp.CatalogResp;
 import io.github.ya_b.registry.client.http.resp.TagsResp;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
-import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+
 
 /**
  * Pure Jib-based image manager that handles all container image operations
@@ -51,12 +56,6 @@ public class JibImageManager {
             String registry = imageRef.getRegistry();
             if (isLocalHttpRegistry(registry)) {
                 log.info("Detected local HTTP registry: {}, applying special configuration", registry);
-
-                // Set system properties that Jib uses for HTTP authentication
-                System.setProperty("jib.httpTimeout", "30000");
-                System.setProperty("jib.allowInsecureRegistries", "true");
-                System.setProperty("jib.sendCredentialsOverHttp", "true");
-
                 // For HTTP registries, we need to ensure credentials are sent
                 if (credentials != null && credentials.length == 2) {
                     // Create a new registry image with explicit credential handling
@@ -157,68 +156,46 @@ public class JibImageManager {
      * Get image digest from registry using HTTP client
      */
     public Optional<String> getDigest(String imageReference, String[] credentials) throws IOException, InvalidImageReferenceException {
-        try {
-            ImageReference imageRef = ImageReference.parse(imageReference);
-            String registry = imageRef.getRegistry();
-            String repository = imageRef.getRepository();
-            String tag = imageRef.getTag().orElse("latest");
+        ImageReference imageRef = ImageReference.parse(imageReference);
+        String registry = imageRef.getRegistry();
+        String repository = imageRef.getRepository();
+        String tag = imageRef.getTag().orElse("latest");
 
-            // Build the registry API URL for getting manifest
-            String protocol = (registry.startsWith("localhost") || registry.startsWith("127.0.0.1") || registry.startsWith("0.0.0.0"))
-                ? "http" : "https";
-            String apiUrl = String.format("%s://%s/v2/%s/manifests/%s", protocol, registry, repository, tag);
+        // Build the registry API URL for getting manifest
+        String protocol = (registry.startsWith("localhost") || registry.startsWith("127.0.0.1") || registry.startsWith("0.0.0.0"))
+            ? "http" : "https";
+        String apiUrl = String.format("%s://%s/v2/%s/manifests/%s", protocol, registry, repository, tag);
 
-            log.info("Getting digest for image: {} from URL: {}", imageReference, apiUrl);
+        log.info("Getting digest for image: {} from URL: {}", imageReference, apiUrl);
 
-            // Create HTTP client
-            HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
-                .build();
+        FailoverHttpClient client = HttpClient.get();
+        Request.Builder requestBuilder = Request.builder().setHttpTimeout(3000)
+            .setAccept(Collections.singletonList("application/vnd.docker.distribution.manifest.v2+json"));
 
-            // Build HTTP request - use HEAD to get digest from headers
-            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(apiUrl))
-                .timeout(Duration.ofSeconds(30))
-                .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                .header("Accept", "application/vnd.docker.distribution.manifest.v2+json");
+        Optional<Authorization> authOptional = Authenticator.getAuthorization(apiUrl, credentials, repository, Scope.PULL);
+        if (authOptional.isPresent()) {
+            requestBuilder.setAuthorization(authOptional.get());
+        }
+        Request request = requestBuilder.build();
+        Response response = client.call("HEAD", URI.create(apiUrl).toURL(), request);
 
-            // Add authentication if credentials are provided
-            if (credentials != null && credentials.length == 2) {
-                String auth = credentials[0] + ":" + credentials[1];
-                String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
-                requestBuilder.header("Authorization", "Basic " + encodedAuth);
-            }
+        if (response.getStatusCode() == 200) {
+            // Get digest from Docker-Content-Digest header
+            
+            List<String> digestHeader = response.getHeader("Docker-Content-Digest");
 
-            HttpRequest request = requestBuilder.build();
-
-            // Send HTTP request
-            HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
-
-            if (response.statusCode() == 200) {
-                // Get digest from Docker-Content-Digest header
-                Optional<String> digestHeader = response.headers().firstValue("Docker-Content-Digest");
-
-                if (digestHeader.isPresent()) {
-                    String digest = digestHeader.get();
-                    log.info("Successfully retrieved digest for image: {} -> {}", imageReference, digest);
-                    return Optional.of(digest);
-                } else {
-                    log.warn("No Docker-Content-Digest header found for image: {}", imageReference);
-                    return Optional.empty();
-                }
+            if (digestHeader.size() > 0) {
+                String digest = digestHeader.get(0);
+                log.info("Successfully retrieved digest for image: {} -> {}", imageReference, digest);
+                return Optional.of(digest);
             } else {
-                log.error("Failed to get digest for image: {}. HTTP status: {}",
-                    imageReference, response.statusCode());
-                throw new IOException("Failed to get digest. HTTP status: " + response.statusCode());
+                log.warn("No Docker-Content-Digest header found for image: {}", imageReference);
+                return Optional.empty();
             }
-
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Request interrupted while getting digest for image: {}", imageReference, e);
-            throw new IOException("Request interrupted", e);
-        } catch (Exception e) {
-            log.error("Failed to get digest for image: {}", imageReference, e);
-            throw new IOException("Failed to get digest", e);
+        } else {
+            log.error("Failed to get digest for image: {}. HTTP status: {}",
+                imageReference, response.getStatusCode());
+            throw new IOException("Failed to get digest. HTTP status: " + response.getStatusCode());
         }
     }
 
@@ -226,66 +203,42 @@ public class JibImageManager {
      * Get image tags from registry using HTTP client
      */
     public List<String> getTags(String imageReference, String[] credentials) throws IOException, InvalidImageReferenceException {
-        try {
-            ImageReference imageRef = ImageReference.parse(imageReference);
-            String registry = imageRef.getRegistry();
-            String repository = imageRef.getRepository();
+        ImageReference imageRef = ImageReference.parse(imageReference);
+        String registry = imageRef.getRegistry();
+        String repository = imageRef.getRepository();
 
-            // Build the registry API URL for listing tags
-            String protocol = (registry.startsWith("localhost") || registry.startsWith("127.0.0.1") || registry.startsWith("0.0.0.0"))
-                ? "http" : "https";
-            String apiUrl = String.format("%s://%s/v2/%s/tags/list", protocol, registry, repository);
+        // Build the registry API URL for listing tags
+        String protocol = (registry.startsWith("localhost") || registry.startsWith("127.0.0.1") || registry.startsWith("0.0.0.0"))
+            ? "http" : "https";
+        String apiUrl = String.format("%s://%s/v2/%s/tags/list", protocol, registry, repository);
 
-            log.info("Getting tags for image: {} from URL: {}", imageReference, apiUrl);
+        log.info("Getting tags for image: {} from URL: {}", imageReference, apiUrl);
 
-            // Create HTTP client
-            HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
-                .build();
+        FailoverHttpClient client = HttpClient.get();
+        Request.Builder requestBuilder = Request.builder().setHttpTimeout(3000);
 
-            // Build HTTP request
-            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(apiUrl))
-                .timeout(Duration.ofSeconds(30))
-                .GET();
+        Optional<Authorization> authOptional = Authenticator.getAuthorization(apiUrl, credentials, repository, Scope.PULL);
+        if (authOptional.isPresent()) {
+            requestBuilder.setAuthorization(authOptional.get());
+        }
+        Request request = requestBuilder.build();
+        Response response = client.get(URI.create(apiUrl).toURL(), request);
 
-            // Add authentication if credentials are provided
-            if (credentials != null && credentials.length == 2) {
-                String auth = credentials[0] + ":" + credentials[1];
-                String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
-                requestBuilder.header("Authorization", "Basic " + encodedAuth);
-            }
 
-            HttpRequest request = requestBuilder.build();
+        if (response.getStatusCode() == 200) {
+            TagsResp tagsResp = JsonTemplateMapper.readJson(response.getBody(), TagsResp.class);
 
-            // Send HTTP request
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 200) {
-                // Parse JSON response
-                Gson gson = new Gson();
-                TagsResp tagsResp = gson.fromJson(response.body(), TagsResp.class);
-
-                if (tagsResp != null && tagsResp.getTags() != null) {
-                    log.info("Successfully retrieved {} tags for image: {}", tagsResp.getTags().size(), imageReference);
-                    return tagsResp.getTags();
-                } else {
-                    log.warn("No tags found in response for image: {}", imageReference);
-                    return Collections.emptyList();
-                }
+            if (tagsResp != null && tagsResp.getTags() != null) {
+                log.info("Successfully retrieved {} tags for image: {}", tagsResp.getTags().size(), imageReference);
+                return tagsResp.getTags();
             } else {
-                log.error("Failed to get tags for image: {}. HTTP status: {}, response: {}",
-                    imageReference, response.statusCode(), response.body());
-                throw new IOException("Failed to get tags. HTTP status: " + response.statusCode());
+                log.warn("No tags found in response for image: {}", imageReference);
+                return Collections.emptyList();
             }
-
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Request interrupted while getting tags for image: {}", imageReference, e);
-            throw new IOException("Request interrupted", e);
-        } catch (Exception e) {
-            log.error("Failed to get tags for image: {}", imageReference, e);
-            throw new IOException("Failed to get tags", e);
+        } else {
+            log.error("Failed to get tags for image: {}. HTTP status: {}, response: {}",
+                imageReference, response.getStatusCode(), new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8));
+            throw new IOException("Failed to get tags. HTTP status: " + response.getStatusCode());
         }
     }
 
@@ -294,71 +247,47 @@ public class JibImageManager {
      * This method first gets the digest of the image, then deletes it using the digest
      */
     public void deleteImage(String imageReference, String[] credentials) throws IOException, InvalidImageReferenceException {
-        try {
-            ImageReference imageRef = ImageReference.parse(imageReference);
-            String registry = imageRef.getRegistry();
-            String repository = imageRef.getRepository();
 
-            log.info("Deleting image: {}", imageReference);
+        ImageReference imageRef = ImageReference.parse(imageReference);
+        String registry = imageRef.getRegistry();
+        String repository = imageRef.getRepository();
 
-            // Step 1: Get the digest of the image
-            Optional<String> digestOpt = getDigest(imageReference, credentials);
-            if (!digestOpt.isPresent()) {
-                throw new IOException("Cannot delete image: unable to get digest for " + imageReference);
-            }
-            String digest = digestOpt.get();
+        log.info("Deleting image: {}", imageReference);
 
-            // Step 2: Delete the image using the digest
-            String protocol = (registry.startsWith("localhost") || registry.startsWith("127.0.0.1") || registry.startsWith("0.0.0.0"))
-                ? "http" : "https";
-            String deleteUrl = String.format("%s://%s/v2/%s/manifests/%s", protocol, registry, repository, digest);
+        // Step 1: Get the digest of the image
+        Optional<String> digestOpt = getDigest(imageReference, credentials);
+        if (!digestOpt.isPresent()) {
+            throw new IOException("Cannot delete image: unable to get digest for " + imageReference);
+        }
+        String digest = digestOpt.get();
 
-            log.info("Deleting image manifest from URL: {}", deleteUrl);
+        // Step 2: Delete the image using the digest
+        String protocol = (registry.startsWith("localhost") || registry.startsWith("127.0.0.1") || registry.startsWith("0.0.0.0"))
+            ? "http" : "https";
+        String deleteUrl = String.format("%s://%s/v2/%s/manifests/%s", protocol, registry, repository, digest);
 
-            // Create HTTP client
-            HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
-                .build();
+        log.info("Deleting image manifest from URL: {}", deleteUrl);
+        FailoverHttpClient client = HttpClient.get();
+        Request.Builder requestBuilder = Request.builder().setHttpTimeout(3000);
 
-            // Build HTTP DELETE request
-            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(deleteUrl))
-                .timeout(Duration.ofSeconds(30))
-                .method("DELETE", HttpRequest.BodyPublishers.noBody());
-
-            // Add authentication if credentials are provided
-            if (credentials != null && credentials.length == 2) {
-                String auth = credentials[0] + ":" + credentials[1];
-                String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
-                requestBuilder.header("Authorization", "Basic " + encodedAuth);
-            }
-
-            HttpRequest request = requestBuilder.build();
-
-            // Send HTTP DELETE request
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 202 || response.statusCode() == 204) {
-                log.info("Successfully deleted image: {} (digest: {})", imageReference, digest);
-            } else if (response.statusCode() == 404) {
-                log.warn("Image not found for deletion: {} (digest: {})", imageReference, digest);
-                throw new IOException("Image not found: " + imageReference);
-            } else if (response.statusCode() == 405) {
-                log.error("Delete operation not supported by registry for image: {}", imageReference);
-                throw new IOException("Delete operation not supported by registry");
-            } else {
-                log.error("Failed to delete image: {}. HTTP status: {}, response: {}",
-                    imageReference, response.statusCode(), response.body());
-                throw new IOException("Failed to delete image. HTTP status: " + response.statusCode());
-            }
-
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Request interrupted while deleting image: {}", imageReference, e);
-            throw new IOException("Request interrupted", e);
-        } catch (Exception e) {
-            log.error("Failed to delete image: {}", imageReference, e);
-            throw new IOException("Failed to delete image", e);
+        Optional<Authorization> authOptional = Authenticator.getAuthorization(deleteUrl, credentials, repository, Scope.DELETE);
+        if (authOptional.isPresent()) {
+            requestBuilder.setAuthorization(authOptional.get());
+        }
+        Request request = requestBuilder.build();
+        Response response = client.call("DELETE", URI.create(deleteUrl).toURL(), request);
+        if (response.getStatusCode() == 202 || response.getStatusCode() == 204) {
+            log.info("Successfully deleted image: {} (digest: {})", imageReference, digest);
+        } else if (response.getStatusCode() == 404) {
+            log.warn("Image not found for deletion: {} (digest: {})", imageReference, digest);
+            throw new IOException("Image not found: " + imageReference);
+        } else if (response.getStatusCode() == 405) {
+            log.error("Delete operation not supported by registry for image: {}", imageReference);
+            throw new IOException("Delete operation not supported by registry");
+        } else {
+            log.error("Failed to delete image: {}. HTTP status: {}, response: {}",
+                imageReference, response.getStatusCode(), new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8));
+            throw new IOException("Failed to delete image. HTTP status: " + response.getStatusCode());
         }
     }
 
@@ -366,98 +295,74 @@ public class JibImageManager {
      * Get catalog (list of repositories) from registry using HTTP client
      */
     public CatalogResp getCatalog(String registryUrl, String[] credentials, Integer count, String last) throws IOException {
-        try {
-            // Normalize registry URL
-            String normalizedUrl = registryUrl.replaceAll("/$", "");
 
-            // Build the registry API URL for catalog
-            StringBuilder urlBuilder = new StringBuilder();
-            urlBuilder.append(normalizedUrl).append("/v2/_catalog");
+        // Normalize registry URL
+        String normalizedUrl = registryUrl.replaceAll("/$", "");
 
-            // Add query parameters if provided
-            boolean hasParams = false;
-            if (count != null && count > 0) {
-                urlBuilder.append("?n=").append(count);
-                hasParams = true;
-            }
-            if (last != null && !last.trim().isEmpty()) {
-                urlBuilder.append(hasParams ? "&" : "?").append("last=").append(last.trim());
-            }
+        // Build the registry API URL for catalog
+        StringBuilder urlBuilder = new StringBuilder();
+        urlBuilder.append(normalizedUrl).append("/v2/_catalog");
 
-            String apiUrl = urlBuilder.toString();
-            log.info("Getting catalog from registry URL: {}", apiUrl);
+        // Add query parameters if provided
+        boolean hasParams = false;
+        if (count != null && count > 0) {
+            urlBuilder.append("?n=").append(count);
+            hasParams = true;
+        }
+        if (last != null && !last.trim().isEmpty()) {
+            urlBuilder.append(hasParams ? "&" : "?").append("last=").append(last.trim());
+        }
 
-            // Create HTTP client
-            HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(30))
-                .build();
+        String apiUrl = urlBuilder.toString();
+        log.info("Getting catalog from registry URL: {}", apiUrl);
+        
+        FailoverHttpClient client = HttpClient.get();
+        Request.Builder requestBuilder = Request.builder().setHttpTimeout(3000);
 
-            // Build HTTP request
-            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(apiUrl))
-                .timeout(Duration.ofSeconds(30))
-                .GET();
+        Optional<Authorization> authOptional = Authenticator.getAuthorization(apiUrl, credentials, null, Scope.PULL);
+        if (authOptional.isPresent()) {
+            requestBuilder.setAuthorization(authOptional.get());
+        }
+        Request request = requestBuilder.build();
+        Response response = client.get(URI.create(apiUrl).toURL(), request);
 
-            // Add authentication if credentials are provided
-            if (credentials != null && credentials.length == 2) {
-                String auth = credentials[0] + ":" + credentials[1];
-                String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
-                requestBuilder.header("Authorization", "Basic " + encodedAuth);
-            }
+        if (response.getStatusCode() == 200) {
+            CatalogResp catalogResp = JsonTemplateMapper.readJson(response.getBody(), CatalogResp.class);
 
-            HttpRequest request = requestBuilder.build();
-
-            // Send HTTP request
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() == 200) {
-                // Parse JSON response
-                Gson gson = new Gson();
-                CatalogResp catalogResp = gson.fromJson(response.body(), CatalogResp.class);
-
-                if (catalogResp != null) {
-                    // Check for pagination link in Link header
-                    Optional<String> linkHeader = response.headers().firstValue("Link");
-                    if (linkHeader.isPresent()) {
-                        // Parse Link header to extract next page info
-                        String linkValue = linkHeader.get();
-                        // Link header format: </v2/_catalog?last=repo&n=100>; rel="next"
-                        if (linkValue.contains("rel=\"next\"")) {
-                            // Extract the last parameter from the link
-                            int lastIndex = linkValue.indexOf("last=");
-                            if (lastIndex != -1) {
-                                int endIndex = linkValue.indexOf("&", lastIndex);
-                                if (endIndex == -1) {
-                                    endIndex = linkValue.indexOf(">", lastIndex);
-                                }
-                                if (endIndex != -1) {
-                                    String nextLast = linkValue.substring(lastIndex + 5, endIndex);
-                                    catalogResp.setNext(nextLast);
-                                }
+            if (catalogResp != null) {
+                // Check for pagination link in Link header
+                List<String> linkHeader = response.getHeader("Link");
+                if (linkHeader.size() > 0) {
+                    // Parse Link header to extract next page info
+                    String linkValue = linkHeader.get(0);
+                    // Link header format: </v2/_catalog?last=repo&n=100>; rel="next"
+                    if (linkValue.contains("rel=\"next\"")) {
+                        // Extract the last parameter from the link
+                        int lastIndex = linkValue.indexOf("last=");
+                        if (lastIndex != -1) {
+                            int endIndex = linkValue.indexOf("&", lastIndex);
+                            if (endIndex == -1) {
+                                endIndex = linkValue.indexOf(">", lastIndex);
+                            }
+                            if (endIndex != -1) {
+                                String nextLast = linkValue.substring(lastIndex + 5, endIndex);
+                                catalogResp.setNext(nextLast);
                             }
                         }
                     }
-
-                    int repoCount = catalogResp.getRepositories() != null ? catalogResp.getRepositories().size() : 0;
-                    log.info("Successfully retrieved catalog with {} repositories from registry", repoCount);
-                    return catalogResp;
-                } else {
-                    log.warn("Empty catalog response from registry");
-                    return new CatalogResp();
                 }
-            } else {
-                log.error("Failed to get catalog from registry. HTTP status: {}, response: {}",
-                    response.statusCode(), response.body());
-                throw new IOException("Failed to get catalog. HTTP status: " + response.statusCode());
-            }
 
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.error("Request interrupted while getting catalog from registry: {}", registryUrl, e);
-            throw new IOException("Request interrupted", e);
-        } catch (Exception e) {
-            log.error("Failed to get catalog from registry: {}", registryUrl, e);
-            throw new IOException("Failed to get catalog", e);
+                int repoCount = catalogResp.getRepositories() != null ? catalogResp.getRepositories().size() : 0;
+                log.info("Successfully retrieved catalog with {} repositories from registry", repoCount);
+                return catalogResp;
+            } else {
+                log.warn("Empty catalog response from registry");
+                return new CatalogResp();
+            }
+        } else {
+            log.error("Failed to get catalog from registry. HTTP status: {}, response: {}",
+                response.getStatusCode(), new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8));
+            throw new IOException("Failed to get catalog. HTTP status: " + response.getStatusCode());
         }
     }
 
